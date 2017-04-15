@@ -14,82 +14,99 @@ if(!$url)
 
 // ----------------------------------------------
 
-if(!is_dir('cache/'))
-{
-	mkdir('cache', 0777, true);
-}
-
 $html = '';
-$cacheFile = 'zingtv-' . sha1($url) . '.html';
 
-if(!is_file('cache/' . $cacheFile))
-{	
-	$client = new GuzzleHttp\Client();
-	$res = $client->request('GET', $url);
+$client = new GuzzleHttp\Client();
+$res = $client->request('GET', $url);
 
-	if($res->getStatusCode() != 200)
-	{
-		exit('Error, HTTP code ' . $res->getStatusCode());
-	}
-
-	$html = $res->getBody();
-
-	if(!$html)
-	{
-		exit('Error, HTTP return empty body');
-	}
-	
-	file_put_contents('cache/' . $cacheFile, $html);
-}
-else
+if($res->getStatusCode() != 200)
 {
-	$html = file_get_contents('cache/' . $cacheFile);
+	exit('Error, HTTP code ' . $res->getStatusCode());
+}
+
+$html = $res->getBody();
+
+if(!$html)
+{
+	exit('Error, HTTP return empty body');
 }
 
 // ----------------------------------------------
 
 $m = [];
 
-preg_match_all('/<source src="http:\/\/(.*?)" type="video\/mp4" data-res="(.*?)"/i', $html, $m);
+preg_match_all('/label\: \'(360|480)p\'/i', $html, $m);
 
 //print_r($m);
+if(!isset($m[1][1]))
+{
+	exit('Error, Regx not match any thing! [1]');
+}
+
+preg_match_all('/source\: "http:\/\/(.*?)"/i', $html, $m);
+
 if(!isset($m[1][2]))
 {
-	exit('Error, Regx not match any thing!');
+	exit('Error, Regx not match any thing! [media]');
 }
 
-$m = $m[1];
+//print_r($m);
+//exit;
 
 // $m[2] -> 480p
-$downloadLink = 'http://' . $m[2];
+$downloadLink = 'http://' . $m[1][2];
+
+preg_match('/<title>(.*?)<\/title>/i', $html, $m);
+if(!isset($m[1]))
+{
+	exit('Error, Regx not match any thing! [title]');
+}
+
+$title = $m[1];
 
 $old_shell = is_file('zingtv.sh') ? file_get_contents('zingtv.sh') : '';
-file_put_contents('zingtv.sh', $old_shell . 'aria2c -x8 ' . $downloadLink . PHP_EOL);
+file_put_contents('zingtv.sh', $old_shell . 'aria2c -x8 --out="' . $title . '.mp4" ' . $downloadLink . PHP_EOL);
 
 // ----------------------------------------------
 $m = [];
 
-preg_match('/customVideo\[\'nextVideoHint\'\] = (.*);/i', $html, $m);
+preg_match('/seriesId="(.*?)" mediaId="(.*?)"/i', $html, $m);
 //print_r($m);
-if(isset($m[1]))
+if(!empty($m[1]) && !empty($m[2]))
 {
-	$m = json_decode($m[1], true);
+	// API
+	$apiUrl = 'http://tv.zing.vn/xhr/video/get-video-of-series?seriesId=' . $m[1] . '&mediaId=' . $m[2] . '&itemPerPage=3&type=media&callback=PTStudio';
+	$m = preg_replace("/[^(]*\((.*)\)/", "$1", file_get_contents($apiUrl));
+	$m = json_decode($m, true);
+
 	//print_r($m);
+	//exit;
 	
+	if(empty($m['html']))
+	{
+		exit('Error, API return empty data');
+	}
+
+	preg_match_all('/href="(.*?)" title/i', $m['html'], $m);
+	//print_r($m);
+	//exit;
+
 	$found = 0;
 	$_url = str_replace('http://tv.zing.vn', '', $url);
+	//echo $_url;
 	foreach($m[1] as $v)
 	{
-		if(!empty($m[$found]['media']['linkDetail']) && $m[$found]['media']['linkDetail'] == $_url)
-			continue;
-		
+		if($v == $_url)
+			break;
+
 		$found++;
 	}
-	
+
 	$found++;
-	if(!empty($m[$found]['media']['linkDetail']))
+	//echo $found;
+	if(!empty($m[1][$found]))
 	{
-		$nextUrl = 'http://tv.zing.vn' . $m[$found]['media']['linkDetail'];
+		$nextUrl = 'http://tv.zing.vn' . $m[1][$found];
 	}
 }
 
@@ -104,6 +121,7 @@ if(isset($m[1]))
 <body>
 	<p>
 		ZingTV URL: <?php echo $url; ?><br>
+		<h2><?php echo $title; ?></h2>
 		480p: <a href="<?php echo $downloadLink; ?>"><?php echo $downloadLink; ?></a>
 		
 		<?php if($next && !empty($nextUrl)): ?>
@@ -117,6 +135,9 @@ if(isset($m[1]))
 				location.href = 'get.php?next=on&url=<?php echo urlencode($nextUrl); ?>'} , 1000
 			);
 		</script>
+		<?php else: ?>
+		<hr>
+		<p style="color: red;">Không tìm thấy tập tiếp theo</p>
 		<?php endif; ?>
 	</p>
 </body>
